@@ -123,12 +123,12 @@ public:
     Timer() { reset(); }
     static double time() {
 #ifdef _MSC_VER
-        return __rdtsc() / 3.0e9;
+        return __rdtsc() / 2.8e9;
 #else
         unsigned long long a, d;
         __asm__ volatile("rdtsc"
             : "=a"(a), "=d"(d));
-        return (d << 32 | a) / 3.0e9;
+        return (d << 32 | a) / 2.8e9;
 #endif
     }
     void reset() { t = time(); }
@@ -176,39 +176,90 @@ template<typename T> bool chmin(T& a, const T& b) { if (a > b) { a = b; return t
 
 
 
-using namespace std;
+int N, C;
+double elfP;
+
+struct Point {
+    int x, y;
+    Point(int x = 0, int y = 0) : x(x), y(y) {}
+    std::string stringify() const {
+        return format("Point [x=%d, y=%d]", x, y);
+    }
+};
+
+struct Rect {
+    int x, y, w, h;
+    Rect(int x = 0, int y = 0, int w = 0, int h = 0) : x(x), y(y), w(w), h(h) {}
+    std::string stringify() const {
+        return format("Rect [x=%d, y=%d, w=%d, h=%d]", x, y, w, h);
+    }
+};
+
+struct State {
+    int money;
+    char grid[32][32];
+    State() {}
+
+    void load(std::istream& in) {
+        for (int y = 0; y < N; y++) {
+            for (int x = 0; x < N; x++) {
+                in >> grid[y][x];
+            }
+        }
+    }
+
+    int count(const Rect& roi, char type) const {
+        int res = 0;
+        for (int y = roi.y; y < roi.y + roi.w; y++) {
+            for (int x = roi.x; x < roi.x + roi.w; x++) {
+                res += (grid[y][x] == type);
+            }
+        }
+        return res;
+    }
+
+};
 
 int main() {
 
-    int N, C, money;
-    double elfP;
-    cin >> N >> C >> elfP >> money;
-    char grid[32][32];
-    for (int y = 0; y < N; y++) {
-        for (int x = 0; x < N; x++) {
-            cin >> grid[x][y];
+    State state;
+    std::cin >> N >> C >> elfP >> state.money;
+
+    state.load(std::cin);
+
+    Rect best_roi;
+    {
+        int max_presents = -1;
+        for (int y = 1; y + 4 < N; y++) {
+            for (int x = 1; x + 4 < N; x++) {
+                Rect roi(x + 1, y + 1, 3, 3);
+                dump(roi, state.count(roi, 'P'));
+                int num_presents = state.count(roi, 'P');
+                if (chmax(max_presents, num_presents)) {
+                    best_roi = roi;
+                    max_presents = num_presents;
+                }
+            }
         }
+        dump(best_roi, max_presents);
     }
+
     for (int turn = 0; turn < N * N; turn++) {
         int x = 1 + ((turn * (7919)) % (N - 2));
         int y = 1 + ((turn * (50091)) % (N - 2));
-        if (money >= C && grid[x][y] == '.') {
-            cout << y << " " << x << endl;
+        if (state.money >= C && state.grid[y][x] == '.') {
+            std::cout << y << " " << x << std::endl;
         } else {
-            cout << "-1" << endl;
+            std::cout << "-1" << std::endl;
         }
-        cout.flush();
+        std::cout.flush();
         int elapsedTime;
         //read elapsed time
-        cin >> elapsedTime;
+        std::cin >> elapsedTime;
         //read the money
-        cin >> money;
+        std::cin >> state.money;
         //read the updated grid
-        for (int y = 0; y < N; y++) {
-            for (int x = 0; x < N; x++) {
-                cin >> grid[x][y];
-            }
-        }
+        state.load(std::cin);
     }
 
 }
