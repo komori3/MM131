@@ -2,9 +2,9 @@
 #include <random>
 #ifdef _MSC_VER
 #include <ppl.h>
-#include <opencv2/core.hpp>
-#include <opencv2/imgproc.hpp>
-#include <opencv2/highgui.hpp>
+//#include <opencv2/core.hpp>
+//#include <opencv2/imgproc.hpp>
+//#include <opencv2/highgui.hpp>
 #else
 #pragma GCC target("avx2")
 #pragma GCC optimize("O3")
@@ -193,6 +193,16 @@ struct Rect {
     std::string stringify() const {
         return format("Rect [x=%d, y=%d, w=%d, h=%d]", x, y, w, h);
     }
+    Rect get_outer_shell() const { return Rect(x - 1, y - 1, w + 2, h + 2); }
+    Rect get_inner_shell() const { return Rect(x + 1, y + 1, w - 2, h - 2); }
+    std::vector<Point> get_boundary_points() const {
+        std::vector<Point> points;
+        for (int j = 0; j < w - 1; j++) points.emplace_back(x + j, y);
+        for (int i = 0; i < h - 1; i++) points.emplace_back(x + w - 1, y + i);
+        for (int j = w - 1; j > 0; j--) points.emplace_back(x + j, y + h - 1);
+        for (int i = h - 1; i > 0; i--) points.emplace_back(x, y + i);
+        return points;
+    }
 };
 
 struct State {
@@ -242,17 +252,22 @@ int main() {
             }
         }
         dump(best_roi, max_presents);
+        dump(best_roi.get_outer_shell().get_boundary_points());
     }
 
+    auto critical_points = best_roi.get_outer_shell().get_boundary_points();
+
     for (int turn = 0; turn < N * N; turn++) {
-        int x = 1 + ((turn * (7919)) % (N - 2));
-        int y = 1 + ((turn * (50091)) % (N - 2));
-        if (state.money >= C && state.grid[y][x] == '.') {
-            std::cout << y << " " << x << std::endl;
-        } else {
-            std::cout << "-1" << std::endl;
+        bool updated = false;
+        for (const auto [x, y] : critical_points) {
+            if (state.money >= C && state.grid[y][x] == '.') {
+                std::cout << y << ' ' << x << ' ';
+                state.money -= C;
+                updated = true;
+            }
         }
-        std::cout.flush();
+        if (!updated) std::cout << "-1";
+        std::cout << std::endl;
         int elapsedTime;
         //read elapsed time
         std::cin >> elapsedTime;
