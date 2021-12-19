@@ -175,9 +175,28 @@ template<typename T> bool chmax(T& a, const T& b) { if (a < b) { a = b; return t
 template<typename T> bool chmin(T& a, const T& b) { if (a > b) { a = b; return true; } return false; }
 
 
+// general params
+//int grid_size;
+//int box_cost;
+//double elf_spawn_prob;
 
-int N, C;
-double elfP;
+struct TestCase;
+using TestCasePtr = std::shared_ptr<TestCase>;
+struct TestCase {
+    int grid_size;
+    int box_cost;
+    double elf_spawn_prob;
+    int initial_money;
+    char initial_grid[32][32];
+    TestCase(std::istream& in) {
+        in >> grid_size >> box_cost >> elf_spawn_prob >> initial_money;
+        for (int y = 0; y < grid_size; y++) {
+            for (int x = 0; x < grid_size; x++) {
+                in >> initial_grid[y][x];
+            }
+        }
+    }
+};
 
 struct Point {
     int x, y;
@@ -206,13 +225,27 @@ struct Rect {
 };
 
 struct State {
+
+    int grid_size;
+    int box_cost;
+    double elf_spawn_prob;
+
     int money;
     char grid[32][32];
+
     State() {}
 
+    void init(TestCasePtr tc) {
+        grid_size = tc->grid_size;
+        box_cost = tc->box_cost;
+        elf_spawn_prob = tc->elf_spawn_prob;
+        money = tc->initial_money;
+        std::memcpy(grid, tc->initial_grid, sizeof(char) * 32 * 32);
+    }
+
     void load(std::istream& in) {
-        for (int y = 0; y < N; y++) {
-            for (int x = 0; x < N; x++) {
+        for (int y = 0; y < grid_size; y++) {
+            for (int x = 0; x < grid_size; x++) {
                 in >> grid[y][x];
             }
         }
@@ -228,20 +261,41 @@ struct State {
         return res;
     }
 
+    int query(std::istream& in, std::ostream& out, const std::vector<Point> box_points) {
+        assert(box_points.size() * box_cost <= money);
+        if (box_points.empty()) {
+            out << -1;
+        }
+        else {
+            for (const auto [x, y] : box_points) {
+                out << y << ' ' << x << ' ';
+                money -= box_cost;
+            }
+        }
+        out << std::endl;
+        int elapsed_ms;
+        in >> elapsed_ms >> money;
+        load(in);
+        return elapsed_ms;
+    }
+
 };
 
 int main() {
 
-    State state;
-    std::cin >> N >> C >> elfP >> state.money;
+    TestCasePtr tc = std::make_shared<TestCase>(std::cin);
 
-    state.load(std::cin);
+    int grid_size = tc->grid_size;
+    int box_cost = tc->box_cost;
+
+    State state;
+    state.init(tc);
 
     Rect best_roi;
     {
         int max_presents = -1;
-        for (int y = 1; y + 4 < N; y++) {
-            for (int x = 1; x + 4 < N; x++) {
+        for (int y = 1; y + 4 < grid_size; y++) {
+            for (int x = 1; x + 4 < grid_size; x++) {
                 Rect roi(x + 1, y + 1, 3, 3);
                 dump(roi, state.count(roi, 'P'));
                 int num_presents = state.count(roi, 'P');
@@ -257,24 +311,17 @@ int main() {
 
     auto critical_points = best_roi.get_outer_shell().get_boundary_points();
 
-    for (int turn = 0; turn < N * N; turn++) {
-        bool updated = false;
+    for (int turn = 0; turn < grid_size * grid_size; turn++) {
+        std::vector<Point> box_points;
+        int money = state.money;
         for (const auto [x, y] : critical_points) {
-            if (state.money >= C && state.grid[y][x] == '.') {
-                std::cout << y << ' ' << x << ' ';
-                state.money -= C;
-                updated = true;
+            if (money >= box_cost && state.grid[y][x] == '.') {
+                box_points.emplace_back(x, y);
+                money -= box_cost;
             }
         }
-        if (!updated) std::cout << "-1";
-        std::cout << std::endl;
-        int elapsedTime;
-        //read elapsed time
-        std::cin >> elapsedTime;
-        //read the money
-        std::cin >> state.money;
-        //read the updated grid
-        state.load(std::cin);
+        int elapsed_ms = state.query(std::cin, std::cout, box_points);
+        dump(turn, elapsed_ms);
     }
 
 }
