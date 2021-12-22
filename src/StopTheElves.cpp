@@ -2,9 +2,9 @@
 #include <random>
 #ifdef _MSC_VER
 #include <ppl.h>
-//#include <opencv2/core.hpp>
-//#include <opencv2/imgproc.hpp>
-//#include <opencv2/highgui.hpp>
+#include <opencv2/core.hpp>
+#include <opencv2/imgproc.hpp>
+#include <opencv2/highgui.hpp>
 #else
 #pragma GCC target("avx2")
 #pragma GCC optimize("O3")
@@ -506,7 +506,6 @@ int query(State& state, std::istream& in, std::ostream& out, const std::vector<P
 }
 
 int simulate(TestCasePtr tc, const std::vector<Point>& box_points, int seed) {
-    int grid_size = tc->grid_size;
     int box_cost = tc->box_cost;
     Simulator sim;
     sim.set_seed(seed);
@@ -535,18 +534,216 @@ double multi_simulate(TestCasePtr tc, const std::vector<Point>& box_points, int 
     return (double)score_sum / num_trial;
 }
 
+struct LayoutEditor {
+
+    int N;
+    char grid[32][32];
+    std::vector<Point> contour;
+    bool contour_map[32][32];
+    int cost;
+
+    LayoutEditor(TestCasePtr tc) {
+        N = tc->grid_size;
+        std::memcpy(grid, tc->initial_grid, sizeof(char) * 32 * 32);
+        std::memset(contour_map, 0, sizeof(bool) * 32 * 32);
+        contour = create_rect(2, 2, N - 4, N - 4);
+        for (const auto [x, y] : contour) contour_map[y][x] = true;
+        cost = 0;
+        for (const auto [x, y] : contour) {
+            if (grid[y][x] == EMPTY) cost++;
+        }
+        // guard
+        for (const auto [x, y] : create_rect(0, 0, N, N)) {
+            grid[y][x] = PRESENT;
+        }
+    }
+
+    bool is_corner(int r, int c) const {
+        if (contour_map[r + dr[0]][c + dc[0]] && contour_map[r + dr[1]][c + dc[1]]) return true;
+        if (contour_map[r + dr[1]][c + dc[1]] && contour_map[r + dr[2]][c + dc[2]]) return true;
+        if (contour_map[r + dr[2]][c + dc[2]] && contour_map[r + dr[3]][c + dc[3]]) return true;
+        if (contour_map[r + dr[3]][c + dc[3]] && contour_map[r + dr[0]][c + dc[0]]) return true;
+        return false;
+    }
+
+    bool is_corner(const Point& p) {
+        return is_corner(p.y, p.x);
+    }
+
+    int calc_connect_num_8(int y, int x) const {
+        static constexpr int dr8[] = { 0, -1, -1, -1, 0, 1, 1, 1, 0 };
+        static constexpr int dc8[] = { 1, 1, 0, -1, -1, -1, 0, 1, 1 };
+        int n = 0;
+        for (int k = 0; k < 8; k++) n += (int)(contour_map[y + dr8[k]][x + dc8[k]] != contour_map[y + dr8[k + 1]][x + dc8[k + 1]]);
+        return n / 2;
+    }
+
+    int find(int y, int x) const {
+        for (int i = 0; i < contour.size(); i++) {
+            if (contour[i].x == x && contour[i].y == y) return i;
+        }
+        return -1;
+    }
+
+    void erase_corner() {
+        int n = contour.size();
+        for (int i = n - 1; i >= 0; i--) {
+            auto [x, y] = contour[i];
+            if (is_corner(y, x)) {
+                contour_map[y][x] = false;
+                std::swap(contour.back(), contour[i]);
+                contour.pop_back();
+                if (grid[y][x] == EMPTY) cost--;
+            }
+        }
+    }
+
+    std::pair<bool, int> can_move(int y, int x, int d) {
+        static constexpr int dr8[] = { 0, -1, -1, -1, 0, 1, 1, 1 };
+        static constexpr int dc8[] = { 1, 1, 0, -1, -1, -1, 0, 1 };
+        if (grid[y + dr[d]][x + dc[d]] == PRESENT || contour_map[y + dr[d]][x + dc[d]]) return { false, -1 };
+        contour_map[y][x] = false;
+        contour_map[y + dr[d]][x + dc[d]] = true;
+        bool ok = true;
+        for (int k = 0; k < 8; k++) {
+            int ny = y + dr8[k], nx = x + dc8[k];
+            if (contour_map[ny][nx] && calc_connect_num_8(ny, nx) != 2) ok = false;
+        }
+        if (calc_connect_num_8(y + dr[d], x + dc[d]) != 2) ok = false;
+        contour_map[y + dr[d]][x + dc[d]] = false;
+        contour_map[y][x] = true;
+        return { ok, (int)(grid[y][x] == TREE) - (int)(grid[y + dr[d]][x + dc[d]] == TREE) };
+    }
+
+    void do_move(int y, int x, int d, int diff) {
+        int idx = find(y, x);
+        std::swap(contour[idx], contour.back());
+        contour.pop_back();
+        contour_map[y][x] = false;
+        contour.emplace_back(x + dc[d], y + dr[d]);
+        contour_map[y + dr[d]][x + dc[d]] = true;
+        cost += diff;
+    }
+
+    bool check() const {
+        int n = 0;
+        for (int i = 0; i < N; i++) {
+            for (int j = 0; j < N; j++) {
+                if (contour_map[i][j]) n++;
+            }
+        }
+        if (n != contour.size()) return false;
+        for (const auto& [x, y] : contour) {
+            if (!contour_map[y][x]) return false;
+        }
+        return true;
+    }
+
+    void run() {
+        erase_corner();
+        dump(cost);
+        for (int loop = 0; loop < 1000000; loop++) {
+            int i = rnd.next_int(contour.size());
+            auto [x, y] = contour[i];
+            int d = rnd.next_int(4);
+            auto [ok, diff] = can_move(y, x, d);
+            if (!ok) continue;
+            if (diff > 0) continue;
+            do_move(y, x, d, diff);
+            erase_corner();
+        }
+        sort_ccw();
+    }
+
+    void sort_ccw() {
+        constexpr int dy8[] = { 0, -1, -1, -1, 0, 1, 1, 1 };
+        constexpr int dx8[] = { 1, 1, 0, -1, -1, -1, 0, 1 };
+        auto [sy, sx] = [&]() {
+            for (int y = 0; y < N; y++) {
+                for (int x = 0; x < N; x++) {
+                    if (contour_map[y][x]) return std::pair<int, int>(y, x);
+                }
+            }
+            return std::pair<int, int>(-1, -1);
+        }();
+        int sdir = 2;
+        while (!contour_map[sy + dy8[sdir]][sx + dx8[sdir]]) sdir++;
+        int y = sy, x = sx, dir = sdir;
+        std::vector<Point> ncontour({ {x, y} });
+        while (true) {
+            y = y + dy8[dir];
+            x = x + dx8[dir];
+            dir = (dir + 6) & 7;
+            for (int dd = 0; dd < 8; dd++) {
+                int ndir = (dir + dd) & 7;
+                if (contour_map[y + dy8[ndir]][x + dx8[ndir]]) {
+                    dir = ndir;
+                    break;
+                }
+            }
+            if (y == sy && x == sx && dir == sdir) break;
+            ncontour.emplace_back(x, y);
+        }
+        contour = ncontour;
+    }
+
+#ifdef _MSC_VER
+
+    void show(int delay = 0) const {
+        cv::imshow("img", get_img());
+        cv::waitKey(delay);
+    }
+
+    cv::Mat_<cv::Vec3b> get_img() const {
+        static constexpr int grid_size = 32;
+        cv::Mat_<cv::Vec3b> img(N * grid_size, N * grid_size, cv::Vec3b(255, 255, 255));
+        for (int y = 0; y < N; y++) {
+            for (int x = 0; x < N; x++) {
+                cv::Scalar color(255, 255, 255);
+                if (grid[y][x] == TREE) {
+                    color = cv::Scalar(0, 255, 0);
+                }
+                else if (grid[y][x] == PRESENT) {
+                    color = cv::Scalar(0, 0, 255);
+                }
+                cv::Rect rect(grid_size * x, grid_size * y, grid_size, grid_size);
+                cv::rectangle(img, rect, color, cv::FILLED);
+            }
+        }
+        for (int y = 0; y < N; y++) {
+            for (int x = 0; x < N; x++) {
+                cv::Rect rect(grid_size * x, grid_size * y, grid_size, grid_size);
+                if (contour_map[y][x]) {
+                    if (is_corner(y, x)) {
+                        cv::rectangle(img, rect, cv::Scalar(255, 0, 255), 2);
+                    }
+                    else {
+                        cv::rectangle(img, rect, cv::Scalar(255, 0, 0), 2);
+                    }
+                }
+            }
+        }
+        return img;
+    }
+#endif
+};
+
 //#define LOCAL_TEST
 
 int main() {
 
 #ifdef LOCAL_TEST
-    std::ifstream ifs("C:\\dev\\heuristic\\tasks\\MM131\\in\\3.in");
+    std::ifstream ifs("C:\\dev\\heuristic\\tasks\\MM131\\in\\2.in");
     std::istream& in = ifs;
 #else
     std::istream& in = std::cin;
 #endif
 
     TestCasePtr tc = std::make_shared<TestCase>(in);
+
+    LayoutEditor layout(tc);
+    layout.run();
+
     int grid_size = tc->grid_size;
     int box_cost = tc->box_cost;
 
@@ -575,11 +772,44 @@ int main() {
             }
         }
     }
+    for (int dd = 3; dd < 15; dd += 3) {
+        std::vector<Point> best_contour;
+        int max_presents = -1;
+        int dist = std::min((grid_size - 3) / 2, dd);
+        for (int y = 1 + dist; y + dist < grid_size - 1; y++) {
+            for (int x = 1 + dist; x + dist < grid_size - 1; x++) {
+                auto contour = create_rhombus(x, y, dist);
+                auto inner_points = create_inner_rhombus(x, y, dist);
+                int num_presents = 0;
+                for (const auto [x, y] : inner_points) {
+                    if (tc->initial_grid[y][x] == PRESENT) num_presents++;
+                }
+                if (chmax(max_presents, num_presents)) {
+                    best_contour = contour;
+                    max_presents = num_presents;
+                }
+            }
+        }
+        double score = multi_simulate(tc, best_contour, num_trial);
+        dump("rhombus", score);
+        if (chmax(best_score, score)) {
+            critical_points = best_contour;
+        }
+    }
     {
         // rect
         auto contour = create_rect(2, 2, grid_size - 4, grid_size - 4);
         double score = multi_simulate(tc, contour, num_trial);
         dump("rect", score);
+        if (chmax(best_score, score)) {
+            critical_points = contour;
+        }
+    }
+    {
+        // low energy
+        auto contour = layout.contour;
+        double score = multi_simulate(tc, contour, num_trial);
+        dump("low energy", score);
         if (chmax(best_score, score)) {
             critical_points = contour;
         }
@@ -619,7 +849,7 @@ int main() {
                 money -= box_cost;
             }
         }
-        int elapsed_ms = query(state, std::cin, std::cout, box_points);
+        query(state, std::cin, std::cout, box_points);
     }
 #endif
 
